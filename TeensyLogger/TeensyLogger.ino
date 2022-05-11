@@ -148,7 +148,7 @@ void sample() {
   }
 
   // Average data after oversampling
-  for (i = 0; i > active_channels; i++) {
+  for (i = 0; i < active_channels; i++) {
     data[next_sample][i] >>= oversampling;
   }
     
