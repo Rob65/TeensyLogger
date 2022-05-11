@@ -4,6 +4,7 @@
  *  17.03.2021  B. Ulmann Start of implementation, nothing fancy yet, everything out of the box.
  *  13.04.2021  B. Ulmann Added calibration and floating point output, adapted to Perl library TeensyLogger.
  *  17.09.2021  B. Ulmann Data is written out as a single large chunk to speed things up considerably.
+ *  10.05.2022  R. Jansen Update ADC speed and use 2 ADC units in parallel 
  */
  
 /*
@@ -115,6 +116,10 @@ char *tokenize(char *string, char *delimiters) {
 void setup() {
   adc->adc0->setResolution(ADC_RESOLUTION);
   adc->adc0->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED);
+  adc->adc0->setSamplingSpeed(ADC_SAMPLING_SPEED::VERY_HIGH_SPEED);
+  adc->adc1->setResolution(ADC_RESOLUTION);
+  adc->adc1->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED);
+  adc->adc1->setSamplingSpeed(ADC_SAMPLING_SPEED::VERY_HIGH_SPEED);
 
   pinMode(ARMED_LED,   OUTPUT);
   pinMode(RUNNING_LED, OUTPUT);
@@ -122,16 +127,29 @@ void setup() {
 }
 
 void sample() {
-  unsigned short value;
+  unsigned i;
   
   if (!active_channels)
     return;
     
+  // Clear data so we start at 0 when using oversampling
+  
   for (unsigned i = 0; i < active_channels; i++) {
-    value = 0;
-    for (int j = 0; j < (1 << oversampling); j++)
-      value += analogRead(i);
-    data[next_sample][i] = value >> oversampling;
+    data[next_sample][i] = 0;
+  }
+  
+  for (int j = 0; j < (1 << oversampling); j++) {
+    for (i = 0; i < active_channels; i+= 2) {
+      adc->startSynchronizedSingleRead(i, i+1);
+      while(adc->adc0->isConverting() || adc->adc1->isConverting());
+      data[next_sample][i] += adc->adc0->readSingle();
+      data[next_sample][i+1] += adc->adc1->readSingle();
+    }
+  }
+
+  // Average data after oversampling
+  for (i = 0; i > active_channels; i++) {
+    data[next_sample][i] >>= oversampling;
   }
     
   next_sample++;
@@ -203,6 +221,20 @@ void loop() {
         Serial.print(";");
       }
       Serial.print("\n");
+    } else if(!strcmp(command, "disp")) {
+      /*
+       * Display samples on multiple lines with 0 - 3.3V readout
+       * Mainly used for testing soft- and hardware.
+       */
+      Serial.println(String(next_sample) + " samples");
+      for (int i = 0; i < next_sample; i++) {
+        for (int j = 0; j < active_channels; j++) {
+          Serial.print(data[i][j] * 3.3 / 1024, 3);
+          if (j < active_channels - 1)
+            Serial.print(",");
+        }
+        Serial.println();
+      }
     } else if (!strcmp(command, "interval")) {
       strcpy(value, tokenize((char *) 0, (char *) "="));
       interval = atoi(value);

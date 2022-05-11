@@ -1,8 +1,12 @@
 # TeensyLogger
-This repository holds all code and schematics for a simple eight channel
-data logger based on a Teensy 4.1. This was developed with analog computing
-in mind but can be used for basically anything requiring not more than eight
-channels and ideally having a TTL trigger signal available.
+This repository holds all code and schematics for an upgraded TeensyLogger from Anabrid.
+It allows for higher sample rates, an easier integration with computer based
+scripting/python application and [future enhancement] it can also be used as a hybrid controller for
+The Analog Thing as a replacement for the Arduino Mega version as shown on
+https://the-analog-thing.org/wiki/Hybrid_Computer
+
+Please note that the hybrid interface is not yet available, I don't have
+The Analog Thing to start testing this.
 
 ## Hardware
 The TeensyLogger is a very simple eight channel data recorder based on a
