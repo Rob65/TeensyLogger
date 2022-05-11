@@ -153,9 +153,9 @@ void sample() {
   }
     
   next_sample++;
-  if (next_sample > max_samples) {
+  if (next_sample >= max_samples) {
     stop();
-    Serial.print("\tSampling automatically stopped after " + String(next_sample - 1) + " samples.\n");
+    Serial.print("\tSampling automatically stopped after " + String(next_sample) + " samples.\n");
   }
 }
 
