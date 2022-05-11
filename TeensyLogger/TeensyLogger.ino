@@ -1,3 +1,5 @@
+#include <EEPROM.h>
+
 /*
  *  Simple eight channel data recorder based on a Teensy 4.1.
  *  
@@ -16,7 +18,7 @@
 #include <ADC.h>
 #include <IntervalTimer.h>
 
-#define VERSION 0.1
+#define VERSION 0.2
 
 #define STRING_LENGTH     133
 #define MAX_CHANNELS      8
@@ -50,6 +52,7 @@ String help_text = "Teensy DataRecorder " + String(VERSION) + "\n\
 ?               Print help\n\
 arm             Prepare a data collection run which will be started by a trigger signal or command\n\
 benchmark       Perform ADC benchmark\n\
+calibrate       Calibrate analog interface\n\
 channels=x      Set number of channels to x (0 < x <= )" + String(MAX_CHANNELS) + "\n\
 dump            Write data gathered to the USB interface\n\
 interval=x      Set the sampling interval to x microseconds\n\
@@ -113,6 +116,135 @@ char *tokenize(char *string, char *delimiters) {
   return NULL;
 }
 
+/*
+ * Load the calibration data from the EEPROM section in Flash
+ * but only when the magic number is correct (0xA5, 0x5A in the first two bytes)
+ */
+void calibration_load() {
+  unsigned addr;
+  unsigned magic;
+
+  magic = (EEPROM.read(0) << 8) + EEPROM.read(1);
+
+  if(magic != 0xA55A) {
+    Serial.println("Warning: Analog interface not calibrated !");
+    return;
+  }
+  addr = 2;
+  for (int c = 0; c < MAX_CHANNELS; c++) {
+    zero[c] = (EEPROM.read(addr  ) << 8) + EEPROM.read(addr+1);
+    vpos[c] = (EEPROM.read(addr+2) << 8) + EEPROM.read(addr+3);
+    vneg[c] = (EEPROM.read(addr+4) << 8) + EEPROM.read(addr+5);
+    addr += 6;
+  }
+}
+
+/*
+ * Save the calibration data to the EEPROM section in Flash
+ * This also writes the magic number if needed
+ */
+void calibration_save() {
+  unsigned addr;
+  unsigned magic;
+
+  addr = 2;
+  for (int c = 0; c < MAX_CHANNELS; c++) {
+    EEPROM.write(addr, zero[c] >> 8);
+    EEPROM.write(addr+1, zero[c] & 0xff);
+    EEPROM.write(addr+2, vpos[c] >> 8);
+    EEPROM.write(addr+3, vpos[c] & 0xff);
+    EEPROM.write(addr+4, vneg[c] >> 8);
+    EEPROM.write(addr+5, vneg[c] & 0xff);
+    addr += 6;
+  }
+  magic = (EEPROM.read(0) << 8) + EEPROM.read(1);
+
+  if(magic != 0xA55A) {
+    EEPROM.write(0, 0xA5);
+    EEPROM.write(1, 0x5A);
+  }
+}
+
+/*
+ * Calibrate all channels by connecting them all to -10, 0 and +10 V
+ */
+void calibration_procedure() {
+  char input[STRING_LENGTH];
+  unsigned short org_oversampling = oversampling,
+                 org_max_samples = max_samples,
+                 org_active_channels = active_channels;
+  
+  Serial.println("Starting calibration procedure, press 'n' at any time to abort");
+  Serial.println("Connect all channels to -10 V, then press -");
+  while (!Serial.available()) ; // Wait for input
+  Serial.readString().toCharArray(input, STRING_LENGTH);
+  if (input[0] != '-') {
+    Serial.println("Aborting calibration");
+    return;
+  }
+
+  // Initialize and read all vneg levels
+  active_channels = MAX_CHANNELS;
+  oversampling = 4;
+  max_samples = 3;
+  next_sample = 0;
+  
+  sample();
+
+  Serial.println("Connect all channels to 0 V, then press 0");
+  while (!Serial.available()) ; // Wait for input
+  Serial.readString().toCharArray(input, STRING_LENGTH);
+  if (input[0] != '0') {
+    Serial.println("Aborting calibration");
+    oversampling = org_oversampling;
+    max_samples = org_max_samples;
+    active_channels = org_active_channels;
+    
+    return;
+  }
+
+  // Read all zero levels
+  sample();
+  
+  Serial.println("Connect all channels to +10 V, then press +");
+  while (!Serial.available()) ; // Wait for input
+  Serial.readString().toCharArray(input, STRING_LENGTH);
+  if (input[0] != '+') {
+    Serial.println("Aborting calibration");
+    oversampling = org_oversampling;
+    max_samples = org_max_samples;
+    active_channels = org_active_channels;
+    return;
+  }
+
+  // Read all vpos levels
+  sample();
+
+  // Calibration done, save all samples in calibration data
+
+  for (int i = 0; i < MAX_CHANNELS; i++) {
+    vneg[i] = data[0][i];
+    zero[i] = data[1][i];
+    vpos[i] = data[2][i];
+  }
+
+  oversampling = org_oversampling;
+  max_samples = org_max_samples;
+  active_channels = org_active_channels;
+  
+  Serial.println("Save calibration data [y/n] ?");
+  while (!Serial.available()) ; // Wait for input
+  Serial.readString().toCharArray(input, STRING_LENGTH);
+  if (input[0] != 'y') {
+    Serial.println("Calibration finished, data NOT saved to EEPROM");
+    return;
+  }
+
+  calibration_save();
+
+  Serial.println("Calibration finished, data saved");
+}
+
 void setup() {
   adc->adc0->setResolution(ADC_RESOLUTION);
   adc->adc0->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED);
@@ -124,6 +256,8 @@ void setup() {
   pinMode(ARMED_LED,   OUTPUT);
   pinMode(RUNNING_LED, OUTPUT);
   pinMode(TRIGGER_IN,  INPUT);
+
+  calibration_load();
 }
 
 void sample() {
@@ -209,6 +343,8 @@ void loop() {
         active_channels = channels;
         Serial.print("\tchannels=" + String(active_channels) + "\n");
       }
+    } else if (!strcmp(command, "calibrate")) {
+      calibration_procedure();
     } else if (!strcmp(command, "dump")) {
       Serial.print(String(next_sample) + " samples\n");
       for (int i = 0; i < next_sample; i++) {

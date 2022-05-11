@@ -43,6 +43,8 @@ The following commands are implemented in the firmware:
        command (see below) is issued.
 - benchmark: This will perform 1000 AD conversions and return the time 
        required for a single conversion of a given number of input channels.
+- calibrate: Calibrates the analog inputs to a normalized -1 to +1 range.
+       The calibration procedure asks for all channels to be connected to -10, 0 and 10 V.
 - channels=x: This command is used to set the number of channels to be sampled.
        Valid values of x are in the interval 1 to 8.
 - dump: Dump all data gathered during a sampling period to the USB port. The
