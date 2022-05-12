@@ -7,6 +7,7 @@
  *  13.04.2021  B. Ulmann Added calibration and floating point output, adapted to Perl library TeensyLogger.
  *  17.09.2021  B. Ulmann Data is written out as a single large chunk to speed things up considerably.
  *  10.05.2022  R. Jansen Update ADC speed and use 2 ADC units in parallel 
+ *  12.05.2022  R. Jansen Changed normalization and added debugging commands to show raw and voltages for ADC values
  */
  
 /*
@@ -18,7 +19,7 @@
 #include <ADC.h>
 #include <IntervalTimer.h>
 
-#define VERSION 0.2
+#define VERSION "0.2.1"
 
 #define STRING_LENGTH     133
 #define MAX_CHANNELS      8
@@ -48,13 +49,15 @@ int zero[MAX_CHANNELS] = {507, 508, 508, 507, 511, 508, 510, 509},  // Value at 
     vneg[MAX_CHANNELS] = {197, 197, 192, 197, 200, 198, 200, 197};  // Value at -10 V input
 
 
-String help_text = "Teensy DataRecorder " + String(VERSION) + "\n\
+String help_text = "Teensy DataRecorder "  VERSION  "\n\
 ?               Print help\n\
 arm             Prepare a data collection run which will be started by a trigger signal or command\n\
 benchmark       Perform ADC benchmark\n\
 calibrate       Calibrate analog interface\n\
 channels=x      Set number of channels to x (0 < x <= )" + String(MAX_CHANNELS) + "\n\
 dump            Write data gathered to the USB interface\n\
+dumpd           Write data as digital ADC values for debugging\n\
+dumpv           Write data as 0.0 - 3.3 V values for hardware debugging\n\
 interval=x      Set the sampling interval to x microseconds\n\
 ms=x            Set number of samples for the run\n\
 reset           Reset the data logger\n\
@@ -349,7 +352,19 @@ void loop() {
       Serial.print(String(next_sample) + " samples\n");
       for (int i = 0; i < next_sample; i++) {
         for (int j = 0; j < active_channels; j++) {
-          float value = 2 * (float) (data[i][j] - zero[j]) / (float) (vpos[j] - vneg[j]);
+          /*
+           * The original normalization (value = 2 * (float) (data[i][j] - zero[j]) / (float) (vpos[j] - vneg[j]))
+           * used a simple linear mapping with an offset for the zero point. If the positive and negative 'legs'
+           * are not the exact same length, this results in a mapping that goes outside, or never reaches the -1 / +1 range.
+           * A slightly different mapping, used here, maps the vneg - zero and zero - vpos ranges separately 
+           * negative and positive.
+           */
+          float value;
+          if (data[i][j]<=0)
+            value = (data[i][j] - zero[j]) / (float) (zero[j] - vneg[j]);
+          else
+            value = (data[i][j] - zero[j]) / (float) (vpos[j] - zero[j]);
+            
           Serial.print(value, 3);
           if (j < active_channels - 1) 
             Serial.print(",");
@@ -357,7 +372,21 @@ void loop() {
         Serial.print(";");
       }
       Serial.print("\n");
-    } else if(!strcmp(command, "disp")) {
+    } else if(!strcmp(command, "dumpd")) {
+      /*
+       * Display samples on multiple lines as ADC (digital) value
+       * Mainly used for testing soft- and hardware.
+       */
+      Serial.println(String(next_sample) + " samples");
+      for (int i = 0; i < next_sample; i++) {
+        for (int j = 0; j < active_channels; j++) {
+          Serial.print(data[i][j]);// * 3.3 / 1024, 3);
+          if (j < active_channels - 1)
+            Serial.print(",");
+        }
+        Serial.println();
+      }
+    } else if(!strcmp(command, "dumpv")) {
       /*
        * Display samples on multiple lines with 0 - 3.3V readout
        * Mainly used for testing soft- and hardware.
